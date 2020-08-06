@@ -5,6 +5,8 @@
 #include <memory>
 #include <map>
 
+#include <unknwn.h>  // IUnknown
+
 #include "polyhook2/IHook.hpp"
 #include "polyhook2/MemProtector.hpp"
 #include "polyhook2/Misc.hpp"
@@ -46,8 +48,6 @@ public:
 
 	template<typename VFuncType, typename ... Args>
 	auto origFunc(Args&& ... args) {
-		// NOTE: could do extra type check if VFuncTypes were a template argument of the class
-		// static_assert(std::disjunction_v<std::is_same<VFuncType, VFuncTypes> ...>);
 		auto func = reinterpret_cast<typename VFuncType::func_type>(m_origVFuncs.at(VFuncType::func_index));
 		return func(std::forward<Args>(args) ...);
 	};
@@ -73,6 +73,73 @@ private:
 	bool m_Hooked;
 };
 
-}
+namespace Helper {
+
+// helper classes for VTableSwapHook with
+// - RAII (automatically hook in constructor, unhook in destructor)
+// - extra type check for origFunc
+// - share ownership of instance, so it is not destroyed before hook is destroyed
+
+// VTableSwapHook to an object managed by a shared_ptr (or unique_ptr via std::move)
+template<typename T, typename ... VFuncTypes>
+class SharedVTableSwapHook : private PLH::VTableSwapHook {
+public:
+	SharedVTableSwapHook(std::shared_ptr<T> instance, VFuncTypes ... new_funcs)
+		: PLH::VTableSwapHook(reinterpret_cast<uint64_t>(instance.get()), new_funcs ...)
+		, m_shared_ptr(instance)
+	{
+		static_assert(!std::is_base_of_v<IUnknown, T>, "Use PLH::Helper::ComVTableSwapHook for COM classes.");
+		hook();
+	};
+
+	template<typename VFuncType, typename ... Args>
+	inline auto origFunc(Args&& ... args) {
+		static_assert(std::disjunction_v<std::is_same<VFuncType, VFuncTypes> ...>);
+		return PLH::VTableSwapHook::origFunc<VFuncType>(std::forward<Args>(args) ...);
+	};
+
+	virtual ~SharedVTableSwapHook()
+	{
+		unHook();
+	}
+
+private:
+	// shared pointer to maintain ownership
+	std::shared_ptr<T> m_shared_ptr;
+};
+
+// VTableSwapHook to a COM object (anything deriving from IUnknown)
+template<typename T, typename ... VFuncTypes>
+class ComVTableSwapHook : private PLH::VTableSwapHook {
+public:
+	ComVTableSwapHook(T* instance, VFuncTypes ... new_funcs)
+		: PLH::VTableSwapHook(reinterpret_cast<uint64_t>(instance), new_funcs ...)
+		, m_com_ptr(instance)
+	{
+		static_assert(std::is_base_of_v<IUnknown, T>, "Use PLH::Helper::SharedVTableSwapHook for non COM classes.");
+		m_com_ptr->AddRef();
+		hook();
+	};
+
+	template<typename VFuncType, typename ... Args>
+	inline auto origFunc(Args&& ... args) {
+		static_assert(std::disjunction_v<std::is_same<VFuncType, VFuncTypes> ...>);
+		return PLH::VTableSwapHook::origFunc<VFuncType>(std::forward<Args>(args) ...);
+	};
+
+	virtual ~ComVTableSwapHook()
+	{
+		unHook();
+		m_com_ptr->Release();
+	}
+
+private:
+	// com object pointer to get and release ownership
+	T* m_com_ptr;
+};
+
+} // namespace Helper
+
+} // namespace PLH
 
 #endif

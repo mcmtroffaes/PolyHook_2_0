@@ -347,6 +347,7 @@ if(POLYHOOK_FEATURE_VIRTUALS)
 		target_sources(${PROJECT_NAME} PRIVATE
 			${PROJECT_SOURCE_DIR}/UnitTests/TestVTableSwapHook.cpp
 			${PROJECT_SOURCE_DIR}/UnitTests/TestVTableSwapHook2.cpp
+			${PROJECT_SOURCE_DIR}/UnitTests/TestVTableSwapHook3.cpp
 			${PROJECT_SOURCE_DIR}/UnitTests/TestVFuncSwapHook.cpp)
 	endif()
 endif()
